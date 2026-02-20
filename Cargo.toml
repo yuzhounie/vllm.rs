@@ -80,6 +80,9 @@ flash-context = ["attention-rs/flash-attn", "attention-rs/flash-decoding", "atte
 metal = ["candle-core/metal", "candle-nn/metal", "attention-rs/metal", "dep:metal"]
 python = ["pyo3"]
 
+[patch."https://github.com/guoqingbao/cudarc.git"]
+cudarc = { git = "https://github.com/rucnyz/cudarc.git", rev = "cee01d4" }
+
 [[bin]]
 name = "runner"
 path = "src/runner/runner.rs"

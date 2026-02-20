@@ -737,7 +737,7 @@ pub async fn chat_completion(
 
         ChatResponder::Streamer(
             Sse::new(Streamer {
-                rx: client_rx,
+                stream: client_rx.into_stream(),
                 status: StreamingStatus::Uninitialized,
                 disconnect_tx: Some(disconnect_tx),
             })

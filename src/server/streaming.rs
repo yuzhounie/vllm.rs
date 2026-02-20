@@ -1,6 +1,5 @@
 use super::ChatCompletionChunk;
 use axum::response::sse::Event;
-use flume::Receiver;
 use futures::Stream;
 use std::{
     pin::Pin,
@@ -24,7 +23,7 @@ pub enum ChatResponse {
 }
 
 pub struct Streamer {
-    pub rx: Receiver<ChatResponse>,
+    pub stream: flume::r#async::RecvStream<'static, ChatResponse>,
     pub status: StreamingStatus,
     pub disconnect_tx: Option<watch::Sender<bool>>,
 }
@@ -42,12 +41,12 @@ impl Drop for Streamer {
 impl Stream for Streamer {
     type Item = Result<Event, axum::Error>;
 
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.status == StreamingStatus::Stopped {
             return Poll::Ready(None);
         }
-        match self.rx.try_recv() {
-            Ok(resp) => match resp {
+        match Pin::new(&mut self.stream).poll_next(cx) {
+            Poll::Ready(Some(resp)) => match resp {
                 ChatResponse::InternalError(e) => Poll::Ready(Some(Ok(Event::default().data(e)))),
                 ChatResponse::ValidationError(e) => Poll::Ready(Some(Ok(Event::default().data(e)))),
                 ChatResponse::ModelError(e) => Poll::Ready(Some(Ok(Event::default().data(e)))),
@@ -62,15 +61,13 @@ impl Stream for Streamer {
                     Poll::Ready(Some(Ok(Event::default().data("[DONE]"))))
                 }
             },
-            Err(e) => {
-                if self.status == StreamingStatus::Started && e == flume::TryRecvError::Disconnected
-                {
+            Poll::Ready(None) => {
+                if self.status == StreamingStatus::Started {
                     self.status = StreamingStatus::Interrupted;
-                    Poll::Ready(None)
-                } else {
-                    Poll::Pending
                 }
+                Poll::Ready(None)
             }
+            Poll::Pending => Poll::Pending,
         }
     }
 }

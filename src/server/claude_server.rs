@@ -16,7 +16,7 @@ use axum::{
         IntoResponse, Sse,
     },
 };
-use flume::{Receiver, TrySendError};
+use flume::TrySendError;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -325,19 +325,19 @@ enum ClaudeStreamItem {
 }
 
 pub struct ClaudeStreamer {
-    rx: Receiver<ClaudeStreamItem>,
+    stream: flume::r#async::RecvStream<'static, ClaudeStreamItem>,
     status: ClaudeStreamingStatus,
 }
 
 impl Stream for ClaudeStreamer {
     type Item = Result<Event, axum::Error>;
 
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.status == ClaudeStreamingStatus::Stopped {
             return Poll::Ready(None);
         }
-        match self.rx.try_recv() {
-            Ok(item) => match item {
+        match Pin::new(&mut self.stream).poll_next(cx) {
+            Poll::Ready(Some(item)) => match item {
                 ClaudeStreamItem::Event(event) => {
                     if self.status != ClaudeStreamingStatus::Started {
                         self.status = ClaudeStreamingStatus::Started;
@@ -349,16 +349,13 @@ impl Stream for ClaudeStreamer {
                     Poll::Ready(None)
                 }
             },
-            Err(err) => {
-                if self.status == ClaudeStreamingStatus::Started
-                    && err == flume::TryRecvError::Disconnected
-                {
+            Poll::Ready(None) => {
+                if self.status == ClaudeStreamingStatus::Started {
                     self.status = ClaudeStreamingStatus::Interrupted;
-                    Poll::Ready(None)
-                } else {
-                    Poll::Pending
                 }
+                Poll::Ready(None)
             }
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -1825,7 +1822,7 @@ pub async fn messages(
 
         ClaudeResponder::Streamer(
             Sse::new(ClaudeStreamer {
-                rx: client_rx,
+                stream: client_rx.into_stream(),
                 status: ClaudeStreamingStatus::Uninitialized,
             })
             .keep_alive(
